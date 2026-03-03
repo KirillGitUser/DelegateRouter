@@ -6,7 +6,7 @@ namespace RnD.DelegateRouter.Services;
 public class RouterService : IRouterService
 {
     private readonly RouteNode _root = new();
-    private readonly ReaderWriterLockSlim _lock = new(LockRecursionPolicy.NoRecursion);
+    private readonly ReaderWriterLockSlim _lock = new(LockRecursionPolicy.SupportsRecursion);
     private readonly ConcurrentDictionary<string, RouteDefinition> _routeRegistry = new();
 
     public void RegisterRoute<TDelegate>(string template, TDelegate handler) where TDelegate : Delegate
