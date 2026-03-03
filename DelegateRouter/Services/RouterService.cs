@@ -1,4 +1,5 @@
 ﻿using RnD.DelegateRouter.Entities;
+using System.Collections.Concurrent;
 
 namespace RnD.DelegateRouter.Services;
 
@@ -6,17 +7,33 @@ public class RouterService : IRouterService
 {
     private readonly RouteNode _root = new();
     private readonly ReaderWriterLockSlim _lock = new();
+    private readonly ConcurrentDictionary<string, RouteDefinition> _routeRegistry = new();
 
     public void RegisterRoute<TDelegate>(string template, TDelegate handler) where TDelegate : Delegate
     {
+        if (string.IsNullOrWhiteSpace(template))
+        {
+            throw new ArgumentException("Template cannot be empty", nameof(template));
+        }
+
+        ArgumentNullException.ThrowIfNull(handler);
+
         var segments = ParseTemplate(template);
-        var parameterTypes = GetParameterTypes(handler);
-        var routeHandler = new RouteHandler(handler, parameterTypes);
+        var routeHandler = RouteHandler.Create(handler);
+
+        var routeDef = new RouteDefinition
+        {
+            Template = template,
+            Handler = routeHandler,
+            RegisteredAt = DateTime.UtcNow,
+            Segments = [.. segments.Select(ParseSegmentDefinition)]
+        };
 
         _lock.EnterWriteLock();
         try
         {
             _root.AddRoute(segments, 0, routeHandler);
+            _routeRegistry[template] = routeDef;
         }
         finally
         {
@@ -24,7 +41,7 @@ public class RouterService : IRouterService
         }
     }
 
-    public async Task<RouteResult> RouteResultAsync(string path, CancellationToken cancellationToken = default)
+    public async Task<RouteResult> RouteAsync(string path, CancellationToken cancellationToken = default)
     {
         var segments = ParsePath(path);
 
@@ -55,27 +72,50 @@ public class RouterService : IRouterService
 
             for (int i = 0; i < delegateParams.Length; i++)
             {
-                var paramName = delegateParams[i].Name;
-                callArgs[i] = 
-                    paramName != null && parameters.TryGetValue(paramName, out var value) ? 
-                        value : 
-                        delegateParams[i].DefaultValue;
+                var paramInfo = delegateParams[i];
+                if (parameters.TryGetValue(paramInfo.Name!, out var value))
+                {
+                    if (value != null && !paramInfo.ParameterType.IsAssignableFrom(value.GetType()))
+                    {
+                        value = Convert.ChangeType(value, paramInfo.ParameterType);
+                    }
+                    
+                    callArgs[i] = value;
+                }
+                else
+                {
+                    callArgs[i] = paramInfo.DefaultValue;
+                }
+            }
+
+            if (cancellationToken != default)
+            {
+                for (int i = 0; i < delegateParams.Length; i++)
+                {
+                    if (delegateParams[i].ParameterType == typeof(CancellationToken))
+                    {
+                        callArgs[i] = cancellationToken;
+                        break;
+                    }
+                }
             }
 
             var result = handler.HandlerDelegate.DynamicInvoke(callArgs);
 
-            if (result is Task task)
+            if (handler.IsAsync)
             {
-                await task.ConfigureAwait(false);
-
-                var taskType = task.GetType();
-                if (taskType.IsGenericType && taskType.GetGenericTypeDefinition() == typeof(Task<>))
+                if (result is Task task)
                 {
-                    var resultProperty = taskType.GetProperty("Result");
-                    return RouteResult.Success(resultProperty?.GetValue(task));
-                }
+                    await task.ConfigureAwait(false);
 
-                return RouteResult.Success();
+                    if (handler.ReturnType.IsGenericType)
+                    {
+                        var resultProperty = task.GetType().GetProperty("Result");
+                        return RouteResult.Success(resultProperty?.GetValue(task));
+                    }
+
+                    return RouteResult.Success();
+                }
             }
 
             return RouteResult.Success(result);
@@ -86,9 +126,27 @@ public class RouterService : IRouterService
         }
     }
 
+    private static RouteSegmentDefinition ParseSegmentDefinition(string segment)
+    {
+        var def = new RouteSegmentDefinition { OriginalValue = segment };
+
+        if (segment.StartsWith('{') && segment.EndsWith('}'))
+        {
+            def.IsDynamic = true;
+            var content = segment.Trim('{', '}');
+            var parts = content.Split(':');
+
+            if (parts.Length == 2)
+            {
+                def.ParameterName = parts[0];
+                def.ParameterType = parts[1];
+            }
+        }
+
+        return def;
+    }
+
     private static string[] ParseTemplate(string template) => template.Split('/', StringSplitOptions.RemoveEmptyEntries);
 
     private static string[] ParsePath(string path) => path.Split('/', StringSplitOptions.RemoveEmptyEntries);
-
-    private static Type[] GetParameterTypes(Delegate handler) => [.. handler.Method.GetParameters().Select(p => p.ParameterType)];
 }
