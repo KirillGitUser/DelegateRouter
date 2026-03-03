@@ -6,7 +6,7 @@ namespace RnD.DelegateRouter.Services;
 public class RouterService : IRouterService
 {
     private readonly RouteNode _root = new();
-    private readonly ReaderWriterLockSlim _lock = new();
+    private readonly ReaderWriterLockSlim _lock = new(LockRecursionPolicy.NoRecursion);
     private readonly ConcurrentDictionary<string, RouteDefinition> _routeRegistry = new();
 
     public void RegisterRoute<TDelegate>(string template, TDelegate handler) where TDelegate : Delegate
@@ -42,87 +42,89 @@ public class RouterService : IRouterService
 
     public async Task<RouteResult> RouteAsync(string path, CancellationToken cancellationToken = default)
     {
-        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
-
-        _lock.EnterReadLock();
-
         try
         {
-            var match = _root.Match(segments, 0, []);
+            _lock.EnterReadLock();
 
-            if (match == null)
-                return RouteResult.Fail($"No route found for path: {path}");
+            var match = _root.Match(path.Split('/', StringSplitOptions.RemoveEmptyEntries), 0, []);
 
-            return 
-                await ExecuteHandlerAsync(match.Handler, match.Parameters, cancellationToken);
+            return match == null
+                ? RouteResult.Fail($"No route found for path: {path}")
+                : await ExecuteHandlerAsync(match.Handler, match.Parameters, cancellationToken);
         }
         finally
         {
-            _lock.ExitReadLock();
+            if (_lock.IsReadLockHeld)
+            {
+                _lock.ExitReadLock();
+            }
         }
     }
 
     private static async Task<RouteResult> ExecuteHandlerAsync(RouteHandler handler, Dictionary<string, object> parameters, CancellationToken cancellationToken)
     {
-        try
+        return await Task.Run(async () =>
         {
-            var delegateParams = handler.HandlerDelegate.Method.GetParameters();
-            var callArgs = new object?[delegateParams.Length];
-
-            for (int i = 0; i < delegateParams.Length; i++)
+            try
             {
-                var paramInfo = delegateParams[i];
-                if (parameters.TryGetValue(paramInfo.Name!, out var value))
-                {
-                    if (value != null && !paramInfo.ParameterType.IsAssignableFrom(value.GetType()))
-                    {
-                        value = Convert.ChangeType(value, paramInfo.ParameterType);
-                    }
-                    
-                    callArgs[i] = value;
-                }
-                else
-                {
-                    callArgs[i] = paramInfo.DefaultValue;
-                }
-            }
+                var delegateParams = handler.HandlerDelegate.Method.GetParameters();
+                var callArgs = new object?[delegateParams.Length];
 
-            if (cancellationToken != default)
-            {
                 for (int i = 0; i < delegateParams.Length; i++)
                 {
-                    if (delegateParams[i].ParameterType == typeof(CancellationToken))
+                    var paramInfo = delegateParams[i];
+                    if (parameters.TryGetValue(paramInfo.Name!, out var value))
                     {
-                        callArgs[i] = cancellationToken;
-                        break;
+                        if (value != null && !paramInfo.ParameterType.IsAssignableFrom(value.GetType()))
+                        {
+                            value = Convert.ChangeType(value, paramInfo.ParameterType);
+                        }
+
+                        callArgs[i] = value;
+                    }
+                    else
+                    {
+                        callArgs[i] = paramInfo.DefaultValue;
                     }
                 }
-            }
 
-            var result = handler.HandlerDelegate.DynamicInvoke(callArgs);
-
-            if (handler.IsAsync)
-            {
-                if (result is Task task)
+                if (cancellationToken != default)
                 {
-                    await task.ConfigureAwait(false);
-
-                    if (handler.ReturnType.IsGenericType)
+                    for (int i = 0; i < delegateParams.Length; i++)
                     {
-                        var resultProperty = task.GetType().GetProperty("Result");
-                        return RouteResult.Success(resultProperty?.GetValue(task));
+                        if (delegateParams[i].ParameterType == typeof(CancellationToken))
+                        {
+                            callArgs[i] = cancellationToken;
+                            break;
+                        }
                     }
-
-                    return RouteResult.Success();
                 }
-            }
 
-            return RouteResult.Success(result);
-        }
-        catch (Exception ex)
-        {
-            return RouteResult.Fail($"Handler execution failed: {ex.Message}");
-        }
+                var result = handler.HandlerDelegate.DynamicInvoke(callArgs);
+
+                if (handler.IsAsync)
+                {
+                    if (result is Task task)
+                    {
+                        await task.ConfigureAwait(false);
+
+                        if (handler.ReturnType.IsGenericType)
+                        {
+                            var resultProperty = task.GetType().GetProperty("Result");
+                            return RouteResult.Success(resultProperty?.GetValue(task));
+                        }
+
+                        return RouteResult.Success();
+                    }
+                }
+
+                return RouteResult.Success(result);
+            }
+            catch (Exception ex)
+            {
+                return RouteResult.Fail($"Handler execution failed: {ex.Message}");
+            }
+        }, cancellationToken);
     }
 
     private static RouteSegmentDefinition ParseSegmentDefinition(string segment)
