@@ -4,8 +4,7 @@ public class RouteDefinition
 {
     public string Template { get; set; } = string.Empty;
     public RouteHandler Handler { get; set; } = null!;
-    public List<RouteSegmentDefinition> Segments { get; set; } = new();
-    public DateTime RegisteredAt { get; set; }
+    public List<RouteSegmentDefinition> Segments { get; set; } = [];
 
     public override string ToString() => $"{Template} -> {Handler.GetParametersInfo()}";
 }
