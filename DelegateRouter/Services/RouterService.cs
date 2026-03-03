@@ -63,68 +63,53 @@ public class RouterService : IRouterService
 
     private static async Task<RouteResult> ExecuteHandlerAsync(RouteHandler handler, Dictionary<string, object> parameters, CancellationToken cancellationToken)
     {
-        return await Task.Run(async () =>
+        try
         {
-            try
+            var delegateParams = handler.HandlerDelegate.Method.GetParameters();
+            var callArgs = new object?[delegateParams.Length];
+
+            for (int i = 0; i < delegateParams.Length; i++)
             {
-                var delegateParams = handler.HandlerDelegate.Method.GetParameters();
-                var callArgs = new object?[delegateParams.Length];
-
-                for (int i = 0; i < delegateParams.Length; i++)
+                var paramInfo = delegateParams[i];
+                if (parameters.TryGetValue(paramInfo.Name!, out var value))
                 {
-                    var paramInfo = delegateParams[i];
-                    if (parameters.TryGetValue(paramInfo.Name!, out var value))
+                    if (value != null && !paramInfo.ParameterType.IsAssignableFrom(value.GetType()))
                     {
-                        if (value != null && !paramInfo.ParameterType.IsAssignableFrom(value.GetType()))
-                        {
-                            value = Convert.ChangeType(value, paramInfo.ParameterType);
-                        }
+                        value = Convert.ChangeType(value, paramInfo.ParameterType);
+                    }
 
-                        callArgs[i] = value;
-                    }
-                    else
-                    {
-                        callArgs[i] = paramInfo.DefaultValue;
-                    }
+                    callArgs[i] = value;
                 }
-
-                if (cancellationToken != default)
+                else
                 {
-                    for (int i = 0; i < delegateParams.Length; i++)
-                    {
-                        if (delegateParams[i].ParameterType == typeof(CancellationToken))
-                        {
-                            callArgs[i] = cancellationToken;
-                            break;
-                        }
-                    }
+                    callArgs[i] = paramInfo.DefaultValue;
                 }
-
-                var result = handler.HandlerDelegate.DynamicInvoke(callArgs);
-
-                if (handler.IsAsync)
-                {
-                    if (result is Task task)
-                    {
-                        await task.ConfigureAwait(false);
-
-                        if (handler.ReturnType.IsGenericType)
-                        {
-                            var resultProperty = task.GetType().GetProperty("Result");
-                            return RouteResult.Success(resultProperty?.GetValue(task));
-                        }
-
-                        return RouteResult.Success();
-                    }
-                }
-
-                return RouteResult.Success(result);
             }
-            catch (Exception ex)
+
+            var result = handler.HandlerDelegate.DynamicInvoke(callArgs);
+
+            if (handler.IsAsync)
             {
-                return RouteResult.Fail($"Handler execution failed: {ex.Message}");
+                if (result is Task task)
+                {
+                    await task.ConfigureAwait(false);
+
+                    if (handler.ReturnType.IsGenericType)
+                    {
+                        var resultProperty = task.GetType().GetProperty("Result");
+                        return RouteResult.Success(resultProperty?.GetValue(task));
+                    }
+
+                    return RouteResult.Success();
+                }
             }
-        }, cancellationToken);
+
+            return RouteResult.Success(result);
+        }
+        catch (Exception ex)
+        {
+            return RouteResult.Fail($"Handler execution failed: {ex.Message}");
+        }
     }
 
     private static RouteSegmentDefinition ParseSegmentDefinition(string segment)
