@@ -34,7 +34,7 @@ public class Tests
         router.RegisterRoute("/calculate/{a:int}/{b:int}/{operation:string}/",
             async (string operation, int b, int a) =>
             {
-                await Task.Delay(5000);
+                await Task.Delay(500);
 
                 return operation switch
                 {
@@ -73,5 +73,30 @@ public class Tests
         Assert.NotNull(result);
         Assert.True(result.IsSuccess);
         Assert.Equal(result.Result, "User 123e4567-e89b-12d3-a456-426614174000 post 100");
+    }
+
+    [Fact]
+    public async Task TestHighLoad()
+    {
+        router.RegisterRoute("/calculate/{a:int}/{b:int}/{operation:string}/",
+            async (string operation, int b, int a) =>
+            {
+                return operation switch
+                {
+                    "add" => a + b,
+                    "sub" => a - b,
+                    "mul" => a * b,
+                    "div" => b != 0 ? a / b : 0,
+                    _ => 0
+                };
+            });
+
+        await Parallel.ForEachAsync(
+            Enumerable.Range(0, 10000000), 
+            cancellationToken: default, 
+            async (t, ct) => 
+            { 
+                await router.RouteAsync($"/calculate/{t}/{t + Random.Shared.Next(-t, t)}/add/", ct); 
+            });
     }
 }
