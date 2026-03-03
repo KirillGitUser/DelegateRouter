@@ -10,5 +10,4 @@ public class DynamicRouteNode(string parameterName, Func<string, (bool, object?)
     }
 }
 
-public record RouteMatch(RouteHandler Handler, Dictionary<string, object> Parameters);
-public record RouteHandler(Delegate HandlerDelegate, Type[] ParameterTypes);
+public record RouteMatch(RouteHandler Handler, Dictionary<string, object> Parameters, string MatchedTemplate);

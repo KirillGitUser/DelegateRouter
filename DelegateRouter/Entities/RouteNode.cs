@@ -7,29 +7,33 @@ public class RouteNode
     private readonly Dictionary<string, RouteNode> _staticChildren = [];
     private readonly List<DynamicRouteNode> _dynamicChildren = [];
     private RouteHandler? _handler;
+    private string? _template;
 
-    public void AddRoute(string[] segments, int index, RouteHandler handler)
+    public void AddRoute(string[] segments, int index, RouteHandler handler, string? template = null)
     {
         if (index >= segments.Length)
         {
             _handler = handler;
+            _template = template;
             return;
         }
 
         var segment = segments[index];
 
-        if (segment.StartsWith('{') && segment.EndsWith('}'))
+        if (IsDynamicSegment(segment))
         {
             var (paramName, type) = ParseDynamicSegment(segment);
+            var parser = GetParser(type);
+
             var dynamicNode = _dynamicChildren.FirstOrDefault(n => n.ParameterName == paramName);
 
             if (dynamicNode == null)
             {
-                dynamicNode = new DynamicRouteNode(paramName, GetParser(type));
+                dynamicNode = new DynamicRouteNode(paramName, parser);
                 _dynamicChildren.Add(dynamicNode);
             }
 
-            dynamicNode.AddRoute(segments, index + 1, handler);
+            dynamicNode.AddRoute(segments, index + 1, handler, template);
         }
         else
         {
@@ -39,7 +43,7 @@ public class RouteNode
                 _staticChildren[segment] = staticNode;
             }
 
-            staticNode.AddRoute(segments, index + 1, handler);
+            staticNode.AddRoute(segments, index + 1, handler, template);
         }
     }
 
@@ -47,7 +51,9 @@ public class RouteNode
     {
         if (index >= segments.Length)
         {
-            return _handler != null ? new RouteMatch(_handler, parameters) : null;
+            return _handler != null
+                ? new RouteMatch(_handler, parameters, _template ?? "unknown")
+                : null;
         }
 
         var currentSegment = segments[index];
@@ -61,11 +67,12 @@ public class RouteNode
             }
         }
 
+        // Затем динамические
         foreach (var dynamicNode in _dynamicChildren)
         {
             if (dynamicNode.MatchSegment(currentSegment, out var value))
             {
-                Dictionary<string, object> newParams = new(parameters)
+                var newParams = new Dictionary<string, object>(parameters)
                 {
                     [dynamicNode.ParameterName] = value!
                 };
@@ -80,6 +87,8 @@ public class RouteNode
 
         return null;
     }
+
+    private static bool IsDynamicSegment(string segment) => segment.StartsWith('{') && segment.EndsWith('}');
 
     private static (string name, string type) ParseDynamicSegment(string segment)
     {
