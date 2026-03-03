@@ -32,8 +32,10 @@ public class Tests
     public async Task TestCombinationOfParams()
     {
         router.RegisterRoute("/calculate/{a:int}/{b:int}/{operation:string}/",
-            (string operation, int b, int a) =>
+            async (string operation, int b, int a) =>
             {
+                await Task.Delay(5000);
+
                 return operation switch
                 {
                     "add" => a + b,
