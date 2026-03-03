@@ -18,14 +18,13 @@ public class RouterService : IRouterService
 
         ArgumentNullException.ThrowIfNull(handler);
 
-        var segments = ParseTemplate(template);
+        var segments = template.Split('/', StringSplitOptions.RemoveEmptyEntries);
         var routeHandler = RouteHandler.Create(handler);
 
         var routeDef = new RouteDefinition
         {
             Template = template,
             Handler = routeHandler,
-            RegisteredAt = DateTime.UtcNow,
             Segments = [.. segments.Select(ParseSegmentDefinition)]
         };
 
@@ -43,7 +42,7 @@ public class RouterService : IRouterService
 
     public async Task<RouteResult> RouteAsync(string path, CancellationToken cancellationToken = default)
     {
-        var segments = ParsePath(path);
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
 
         _lock.EnterReadLock();
 
@@ -145,8 +144,4 @@ public class RouterService : IRouterService
 
         return def;
     }
-
-    private static string[] ParseTemplate(string template) => template.Split('/', StringSplitOptions.RemoveEmptyEntries);
-
-    private static string[] ParsePath(string path) => path.Split('/', StringSplitOptions.RemoveEmptyEntries);
 }
