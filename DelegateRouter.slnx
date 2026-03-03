@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="DelegateRouter/RnD.DelegateRouter.csproj" />
+  <Project Path="RouterTests/RouterTests.csproj" />
+</Solution>
