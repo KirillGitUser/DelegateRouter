@@ -13,7 +13,7 @@ public class Tests
 
         Assert.NotNull(result);
         Assert.True(result.IsSuccess);
-        Assert.Equal(result.Result.ToString()!, "Static route executed");
+        Assert.Equal(result.Result, "Static route executed");
     }
 
     [Fact]
@@ -25,7 +25,7 @@ public class Tests
 
         Assert.NotNull(result);
         Assert.True(result.IsSuccess);
-        Assert.Equal(result.Result.ToString()!, $"Product {parameter} requested");
+        Assert.Equal(result.Result, $"Product {parameter} requested");
     }
 
     [Fact]
